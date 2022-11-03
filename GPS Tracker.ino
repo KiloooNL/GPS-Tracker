@@ -70,9 +70,25 @@ static const uint32_t GPSBaud = 9600;
 // The TinyGPS+ object
 TinyGPSPlus gps;
 
+// Onboard LED
+#define RED 22     
+#define BLUE 24     
+#define GREEN 23
+#define LED_PWR 25
+
 void setup() {
   Serial.begin(SerialMonitorBaud);
   Serial1.begin(GPSBaud);
+  
+  // Initialize inbuilt LED as an output
+  pinMode(LED_BUILTIN, OUTPUT);
+
+  // initialize the digital Pin as an output
+  pinMode(RED, OUTPUT);
+  pinMode(GREEN, OUTPUT);
+  pinMode(LED_PWR, OUTPUT);
+  digitalWrite(RED, LOW);
+  digitalWrite(GREEN, LOW);
 
   // Wait until serial port is open
   while(!Serial);
@@ -88,9 +104,12 @@ void setup() {
   Serial.println("Booting...");
   for(int i = 0; i < 10; i++) {
     Serial.print(".");
+    digitalWrite(LED_BUILTIN, HIGH);
+    delay(100);
+    digitalWrite(LED_BUILTIN, LOW);
     delay(100);
   }
-
+  
   // Initialize SD Card
   initSD();
 }
@@ -101,17 +120,25 @@ void loop() {
     if(gps.encode(Serial1.read())) {
       if(gps.location.isValid() && gps.date.isValid() && gps.time.isValid()) {
         if(gps.date.year() != '2000') {
-          displayInfo();
-
           String dataStr = ""; // data string for saving
-          dataStr += String(gps.date.month())+"/"+String(gps.date.day())+"/"+
-                          String(gps.date.year())+",";
-          dataStr += String(gps.time.hour())+":"+String(gps.time.minute())+":"+
-                          String(gps.time.second())+"."+String(gps.time.centisecond())+",";
+          dataStr += String(gps.date.month()) + "/"+ 
+                     String(gps.date.day()) + "/" + 
+                     String(gps.date.year()) + ",";
+          dataStr += String(gps.time.hour()) + ":" + 
+                     String(gps.time.minute()) + ":" + 
+                     String(gps.time.second()) + "." + 
+                     String(gps.time.centisecond()) + ",";
           dataStr += String(gps.location.lat(),5)+","; // latitude
           dataStr += String(gps.location.lng(),5); // longitude
           
+          // Run displayInfo() first before we log any data. This will ensure we are moving before logging any data.
+          displayInfo();
+          
+          digitalWrite(GREEN, LOW);
+          delay(500);  
           writeFile(dataStr); // save new data points
+          digitalWrite(GREEN, HIGH);
+          delay(500);
         }
       }
     }
@@ -120,7 +147,7 @@ void loop() {
 
 // Display info in Serial Monitor
 void displayInfo() {
-      // Create some temp values for latitude and longitude for later
+      // Create some temp values for latitude and longitude to use later
       float tempLat = 0;
       float tempLng = 0;
 
@@ -177,7 +204,10 @@ void displayInfo() {
             Serial.println("Waited one minute. We must be stopped. Will resume logging when mobile.");
           } else {
             Serial.println("Currently stationary as location has not changed. Waiting 10 seconds and retrying.");
-            delay(10000);
+            digitalWrite(RED, HIGH);
+            delay(9000); 
+            digitalWrite(RED, LOW); 
+            delay(1000);
           } i++;
         } else {
           while(tempLat == (gps.location.lat(), 4) || tempLng == (gps.location.lng(), 4)) {
@@ -195,30 +225,38 @@ void initSD() {
     sd.initErrorHalt(&Serial);
     return;
   }
-
-  // Create a header in the csv file
-  Serial.println("Writing header to file.");
-  writeFile("Date [mm/dd/yyyy], Time [HH:MM:SS.ZZ], Latitude [deg], Longitude [deg]");
 }
 
 // Function for writing data to SD card
 void writeFile(String WriteData) {
+
+  /** 
+  Create a file, with a filename of today's date
+  Data is stored in GMT time, so a post-conversion will have to be done.
+
+  CSV Header is as follows:
+  Date [mm/dd/yyyy], Time [HH:MM:SS.ZZ], Latitude [deg], Longitude [deg]
+  **/
+
   Serial.print("Writing the following data to file: ");
   Serial.println(WriteData);
 
   // Make sure our current time is valid, otherwise we are writing useless data
   if (gps.time.isValid() && gps.date.year() != '2000') {
     // Write file to SD card - format: YYMMDD
-    if (file.open("TripLog.csv", FILE_WRITE)) {
+    String name = "";
+    name += String(gps.date.year()) + String(gps.date.month()) + String(gps.date.day()) + ".csv";
+    
+    if (file.open(name.c_str(), FILE_WRITE)) {
       file.println(WriteData); // write data to file
       file.close(); // close file before continuing
+      
     } else {
       delay(50); // prevents cluttering
       Serial.println("Unable to write file to SD card."); // print error if SD card issue
     }
   } else {
     Serial.println("Waiting for GPS date sync...");
-    delay(5000);
   }
 }
 
