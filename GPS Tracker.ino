@@ -76,6 +76,10 @@ TinyGPSPlus gps;
 #define GREEN 23
 #define LED_PWR 25
 
+// Create some temp values for latitude and longitude to use later
+String lat, lng, newLat, newLng;
+int count = 0;
+
 void setup() {
   Serial.begin(SerialMonitorBaud);
   Serial1.begin(GPSBaud);
@@ -99,6 +103,8 @@ void setup() {
   if(Serial1.available()) {
     Serial.println("Ready.");
     Serial.println("---------------");
+  } else {
+    Serial.println("Serial1 is not available.");
   }
 
   Serial.println("Booting...");
@@ -119,7 +125,26 @@ void loop() {
   while (Serial1.available()) {
     if(gps.encode(Serial1.read())) {
       if(gps.location.isValid() && gps.date.isValid() && gps.time.isValid()) {
+        // Even though we might be getting a 'valid' GPS time sync, if the year we receive is 2000, then the time sync has not completed.
         if(gps.date.year() != '2000') {
+          /* Store latitude and longitude, then compare it to the originally stored value on the next 4 loops.
+          If the location differs compared to the original then we must have moved, so save the update to the csv file.
+
+          TODO: Use real-world testing to see if gps.location.speed() reports accurate data. If so, we can use this to determine if we are mobile, in addition to, or rather than using location data.
+          */
+          if(count == 0) {
+            lat = String(gps.location.lat(), 4);
+            lng = String(gps.location.lng(), 4);
+            count++;
+          } else {
+            count++;
+            newLat = String(gps.location.lat(), 4);
+            newLng = String(gps.location.lng(), 4);
+            if(count == 4) {
+              count = 0;
+            }
+          }
+
           String dataStr = ""; // data string for saving
           dataStr += String(gps.date.month()) + "/"+ 
                      String(gps.date.day()) + "/" + 
@@ -128,17 +153,27 @@ void loop() {
                      String(gps.time.minute()) + ":" + 
                      String(gps.time.second()) + "." + 
                      String(gps.time.centisecond()) + ",";
-          dataStr += String(gps.location.lat(),5)+","; // latitude
-          dataStr += String(gps.location.lng(),5); // longitude
+          dataStr += String(gps.location.lat(), 7) + ","; // latitude
+          dataStr += String(gps.location.lng(), 7) + ","; // longitude
+          dataStr += String(gps.speed.kmph()); // speed
           
           // Run displayInfo() first before we log any data. This will ensure we are moving before logging any data.
-          displayInfo();
+          displayInfo(); 
           
-          digitalWrite(GREEN, LOW);
-          delay(500);  
-          writeFile(dataStr); // save new data points
-          digitalWrite(GREEN, HIGH);
-          delay(500);
+          // If our current latitude/longitude differs to our original location, then update the csv file
+          if(lat == newLat || lng == newLng) {
+          } else {
+            Serial.println("Location changed");
+            // Flash LED and write data to csv
+            digitalWrite(GREEN, HIGH);
+            delay(500);  
+            writeFile(dataStr);
+            digitalWrite(GREEN, LOW);
+            delay(500);
+          }
+
+          // Run loop every 2.5 seconds
+          delay(2500);
         }
       }
     }
@@ -147,19 +182,11 @@ void loop() {
 
 // Display info in Serial Monitor
 void displayInfo() {
-      // Create some temp values for latitude and longitude to use later
-      float tempLat = 0;
-      float tempLng = 0;
-
       if(gps.location.isValid()) {
         Serial.print("Location: ");
-        Serial.print(gps.location.lat(), 4);
+        Serial.print(gps.location.lat(), 7);
         Serial.print(",");
-        Serial.println(gps.location.lng(), 4);
-
-        // Store our current latitude and logitude
-        tempLat = gps.location.lat();
-        tempLng = gps.location.lng();
+        Serial.println(gps.location.lng(), 7);
       } else {
         Serial.println("Location: Not Available");
       }
@@ -191,30 +218,6 @@ void displayInfo() {
       } else {
         Serial.println("Not Available");
       }
-      Serial.println();
-
-      // Update every 10 seconds
-      delay(10000);
-
-      // Check if we are stationary by comparing the previous GPS location to our current location. If so, let's sleep a while...
-      int i = 0;
-      while((tempLat - gps.location.lat()) < 0.0001 || (tempLng -gps.location.lng()) < 0.00001) {
-        if(i < 10) {
-          if(i == 9) {
-            Serial.println("Waited one minute. We must be stopped. Will resume logging when mobile.");
-          } else {
-            Serial.println("Currently stationary as location has not changed. Waiting 10 seconds and retrying.");
-            digitalWrite(RED, HIGH);
-            delay(9000); 
-            digitalWrite(RED, LOW); 
-            delay(1000);
-          } i++;
-        } else {
-          while(tempLat == (gps.location.lat(), 4) || tempLng == (gps.location.lng(), 4)) {
-            // do nothing - wait until mobile!
-          }
-        }
-      }
 }
 
 void initSD() {
@@ -222,8 +225,11 @@ void initSD() {
  
   // Initialize the SD.
   if (!sd.begin(SD_CONFIG)) {
+    Serial.println("Error initializing SD card...");
     sd.initErrorHalt(&Serial);
     return;
+  } else {
+    Serial.println("SD Card initialized.");
   }
 }
 
