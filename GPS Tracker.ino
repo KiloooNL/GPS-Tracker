@@ -76,10 +76,6 @@ TinyGPSPlus gps;
 #define GREEN 23
 #define LED_PWR 25
 
-// Create some temp values for latitude and longitude to use later
-String lat, lng, newLat, newLng;
-int count = 0;
-
 void setup() {
   Serial.begin(SerialMonitorBaud);
   Serial1.begin(GPSBaud);
@@ -95,9 +91,7 @@ void setup() {
   digitalWrite(GREEN, LOW);
 
   // Wait until serial port is open
-  while(!Serial);
-  Serial.println('Serial is now online');
-  while(!Serial1);
+  while(!Serial1)
   Serial.println('Serial1 is now online');
 
   if(Serial1.available()) {
@@ -126,25 +120,9 @@ void loop() {
     if(gps.encode(Serial1.read())) {
       if(gps.location.isValid() && gps.date.isValid() && gps.time.isValid()) {
         // Even though we might be getting a 'valid' GPS time sync, if the year we receive is 2000, then the time sync has not completed.
-        if(gps.date.year() != '2000') {
-          /* Store latitude and longitude, then compare it to the originally stored value on the next 4 loops.
-          If the location differs compared to the original then we must have moved, so save the update to the csv file.
-
-          TODO: Use real-world testing to see if gps.location.speed() reports accurate data. If so, we can use this to determine if we are mobile, in addition to, or rather than using location data.
-          */
-          if(count == 0) {
-            lat = String(gps.location.lat(), 4);
-            lng = String(gps.location.lng(), 4);
-            count++;
-          } else {
-            count++;
-            newLat = String(gps.location.lat(), 4);
-            newLng = String(gps.location.lng(), 4);
-            if(count == 4) {
-              count = 0;
-            }
-          }
-
+        // In addition to this, wait until we are mobile (moving at over 5kmph)
+        // 5kmph for a reason: sometimes while obtaining a fix the speed is innacurately reported (0-4.5kmph) while stationary
+        if(gps.date.year() != '2000' && gps.speed.kmph() >= 5) {
           String dataStr = ""; // data string for saving
           dataStr += String(gps.date.month()) + "/"+ 
                      String(gps.date.day()) + "/" + 
@@ -159,22 +137,34 @@ void loop() {
           
           // Run displayInfo() first before we log any data. This will ensure we are moving before logging any data.
           displayInfo(); 
-          
-          // If our current latitude/longitude differs to our original location, then update the csv file
-          if(lat == newLat || lng == newLng) {
-          } else {
-            Serial.println("Location changed");
-            // Flash LED and write data to csv
-            digitalWrite(GREEN, HIGH);
-            delay(500);  
-            writeFile(dataStr);
-            digitalWrite(GREEN, LOW);
-            delay(500);
-          }
+
+          digitalWrite(GREEN, HIGH);
+          delay(500);  
+          writeFile(dataStr);
+          digitalWrite(GREEN, LOW);
+          delay(500);
 
           // Run loop every 2.5 seconds
           delay(2500);
         }
+      } else {
+        if(!gps.location.isValid()) {
+          Serial.println("Waiting on location sync.");
+            digitalWrite(RED, HIGH);
+            delay(500);  
+            digitalWrite(RED, LOW);
+            delay(500);
+        }
+        if(!gps.date.isValid()) {
+          Serial.println("Waiting on date sync.");
+        }
+        if(!gps.time.isValid()) {
+          Serial.println("Waiting on time sync.");
+        }
+
+        // Enable GPS dump when debugging
+        // GPSDump();
+        delay(2500);
       }
     }
   }
@@ -255,8 +245,7 @@ void writeFile(String WriteData) {
     
     if (file.open(name.c_str(), FILE_WRITE)) {
       file.println(WriteData); // write data to file
-      file.close(); // close file before continuing
-      
+      file.close(); // close file before continuing 
     } else {
       delay(50); // prevents cluttering
       Serial.println("Unable to write file to SD card."); // print error if SD card issue
