@@ -92,18 +92,18 @@ void setup() {
 
   // Wait until serial port is open
   while(!Serial1)
-  Serial.println('Serial1 is now online');
+  Serial.println(F('Serial1 is now online'));
 
   if(Serial1.available()) {
-    Serial.println("Ready.");
-    Serial.println("---------------");
+    Serial.println(F("Ready."));
+    Serial.println(F("---------------"));
   } else {
-    Serial.println("Serial1 is not available.");
+    Serial.println(F("Serial1 is not available."));
   }
 
-  Serial.println("Booting...");
+  Serial.println(F("Booting..."));
   for(int i = 0; i < 10; i++) {
-    Serial.print(".");
+    Serial.print(F("."));
     digitalWrite(LED_BUILTIN, HIGH);
     delay(100);
     digitalWrite(LED_BUILTIN, LOW);
@@ -149,17 +149,17 @@ void loop() {
         }
       } else {
         if(!gps.location.isValid()) {
-          Serial.println("Waiting on location sync.");
+          Serial.println(F("Waiting on location sync."));
             digitalWrite(RED, HIGH);
             delay(500);  
             digitalWrite(RED, LOW);
             delay(500);
         }
         if(!gps.date.isValid()) {
-          Serial.println("Waiting on date sync.");
+          Serial.println(F("Waiting on date sync."));
         }
         if(!gps.time.isValid()) {
-          Serial.println("Waiting on time sync.");
+          Serial.println(F("Waiting on time sync."));
         }
 
         // Enable GPS dump when debugging
@@ -173,53 +173,53 @@ void loop() {
 // Display info in Serial Monitor
 void displayInfo() {
       if(gps.location.isValid()) {
-        Serial.print("Location: ");
+        Serial.print(F("Location: "));
         Serial.print(gps.location.lat(), 7);
-        Serial.print(",");
+        Serial.print(F(","));
         Serial.println(gps.location.lng(), 7);
       } else {
-        Serial.println("Location: Not Available");
+        Serial.println(F("Location: Not Available"));
       }
 
-      Serial.print("Date: ");
+      Serial.print(F("Date: "));
       if (gps.date.isValid() && gps.date.year() != '2000') {
         Serial.print(gps.date.day());
-        Serial.print("/");
+        Serial.print(F("/"));
         Serial.print(gps.date.month());
-        Serial.print("/");
+        Serial.print(F("/"));
         Serial.println(gps.date.year());
       } else {
-        Serial.println("Not Available");
+        Serial.println(F("Not Available"));
       }
 
-      Serial.print("Time: ");
+      Serial.print(F("Time: "));
       if (gps.time.isValid()) {
         if (gps.time.hour() < 10) Serial.print(F("0"));
         Serial.print(gps.time.hour());
-        Serial.print(":");
+        Serial.print(F(":"));
         if (gps.time.minute() < 10) Serial.print(F("0"));
         Serial.print(gps.time.minute());
-        Serial.print(":");
+        Serial.print(F(":"));
         if (gps.time.second() < 10) Serial.print(F("0"));
         Serial.print(gps.time.second());
-        Serial.print(".");
+        Serial.print(F("."));
         if (gps.time.centisecond() < 10) Serial.print(F("0"));
         Serial.println(gps.time.centisecond());
       } else {
-        Serial.println("Not Available");
+        Serial.println(F("Not Available"));
       }
 }
 
 void initSD() {
-  Serial.println("\nInitializing SD card...");
+  Serial.println(F("\nInitializing SD card..."));
  
   // Initialize the SD.
   if (!sd.begin(SD_CONFIG)) {
-    Serial.println("Error initializing SD card...");
+    Serial.println(F("Error initializing SD card..."));
     sd.initErrorHalt(&Serial);
     return;
   } else {
-    Serial.println("SD Card initialized.");
+    Serial.println(F("SD Card initialized."));
   }
 }
 
@@ -234,7 +234,7 @@ void writeFile(String WriteData) {
   Date [mm/dd/yyyy], Time [HH:MM:SS.ZZ], Latitude [deg], Longitude [deg]
   **/
 
-  Serial.print("Writing the following data to file: ");
+  Serial.print(F("Writing the following data to file: "));
   Serial.println(WriteData);
 
   // Make sure our current time is valid, otherwise we are writing useless data
@@ -248,23 +248,23 @@ void writeFile(String WriteData) {
       file.close(); // close file before continuing 
     } else {
       delay(50); // prevents cluttering
-      Serial.println("Unable to write file to SD card."); // print error if SD card issue
+      Serial.println(F("Unable to write file to SD card.")); // print error if SD card issue
     }
   } else {
-    Serial.println("Waiting for GPS date sync...");
+    Serial.println(F("Waiting for GPS date sync..."));
   }
 }
 
 // Print a GPS dump for debugging
 void GPSDump() {
-  Serial.print("Latitude: ");
+  Serial.print(F("Latitude: "));
   Serial.println(gps.location.lat(), 7); // Latitude in degrees (double)
-  Serial.print("Longitude: ");
+  Serial.print(F("Longitude: "));
   Serial.println(gps.location.lng(), 7); // Longitude in degrees (double)
-  Serial.print("Date: ");
+  Serial.print(F("Date: "));
   Serial.println(gps.date.value()); // Raw date in DDMMYY format (u32)
-  Serial.print("Speed (mps): ");
+  Serial.print(F("Speed (mps): "));
   Serial.println(gps.speed.mps()); // Speed in meters per second (double)
-  Serial.print("Speed (km/hr): ");
+  Serial.print(F("Speed (km/hr): "));
   Serial.println(gps.speed.kmph()); // Speed in kilometers per hour (double)
 }
