@@ -15,6 +15,18 @@ Using the following libraries:
 
 This script will get the location, date and time and print it to a csv file on the sd card.
 It will update every 10 seconds. If the location has not changed, it will check every 10 seconds for a change, and if none is found, wait until mobile again.
+
+Error codes are shown by the red and blue LED and are as follows
+1 long red flash = 10 unit
+1 short blue flash = 1 unit
+For example: 1 long, 2 short = error code 12
+
+11: Serial error (No communication from GPS unit)
+12: SD Card error (No card, wrong chip select pin, or wiring error)
+13: Waiting for location sync
+14: Waiting on date sync
+15: Waiting on time sync
+21: SD card write error
 **/
 
 // Include TinyGPS+ library https://github.com/mikalhart/TinyGPSPlus
@@ -86,19 +98,23 @@ void setup() {
   // initialize the digital Pin as an output
   pinMode(RED, OUTPUT);
   pinMode(GREEN, OUTPUT);
+  pinMode(BLUE, OUTPUT);
   pinMode(LED_PWR, OUTPUT);
-  digitalWrite(RED, LOW);
-  digitalWrite(GREEN, LOW);
+
+  // The power LED and the built-in LED are active-high. 
+  // The three LEDs in the RGB LED, however, are active-low, hence why we are setting them to HIGH (off)
+  digitalWrite(RED, HIGH);
+  digitalWrite(GREEN, HIGH);
+  digitalWrite(BLUE, HIGH);
 
   // Wait until serial port is open
-  while(!Serial1)
-  Serial.println(F('Serial1 is now online'));
+  while(!Serial1) {
+    ledErrorCode(1, 1, 1);
+  }
 
   if(Serial1.available()) {
     Serial.println(F("Ready."));
     Serial.println(F("---------------"));
-  } else {
-    Serial.println(F("Serial1 is not available."));
   }
 
   Serial.println(F("Booting..."));
@@ -120,13 +136,14 @@ void loop() {
     if(gps.encode(Serial1.read())) {
       if(gps.location.isValid() && gps.date.isValid() && gps.time.isValid()) {
         // Even though we might be getting a 'valid' GPS time sync, if the year we receive is 2000, then the time sync has not completed.
-        // In addition to this, wait until we are mobile (moving at over 5kmph)
+        // In addition to this, wait until we are mobile (moving at over 2kmph)
         // 5kmph for a reason: sometimes while obtaining a fix the speed is innacurately reported (0-4.5kmph) while stationary
+        // TODO: A better way to find out if we have moved from our initial starting zone would be to set a geofence during setup(), then proceed to loop(). Once we are outside of the geofence, start logging data.
         if(gps.date.year() != '2000' && gps.speed.kmph() >= 5) {
           String dataStr = ""; // data string for saving
-          dataStr += String(gps.date.month()) + "/"+ 
-                     String(gps.date.day()) + "/" + 
-                     String(gps.date.year()) + ",";
+          dataStr += String(gps.date.year()) + "-"+ 
+                     String(gps.date.month()) + "-" + 
+                     String(gps.date.day()) + ",";
           dataStr += String(gps.time.hour()) + ":" + 
                      String(gps.time.minute()) + ":" + 
                      String(gps.time.second()) + "." + 
@@ -135,31 +152,36 @@ void loop() {
           dataStr += String(gps.location.lng(), 7) + ","; // longitude
           dataStr += String(gps.speed.kmph()); // speed
           
-          // Run displayInfo() first before we log any data. This will ensure we are moving before logging any data.
+          // Print location data to serial
           displayInfo(); 
 
-          digitalWrite(GREEN, HIGH);
-          delay(500);  
-          writeFile(dataStr);
+          // Flash green LED
           digitalWrite(GREEN, LOW);
-          delay(500);
+          writeFile(dataStr);
+          delay(200);
 
-          // Run loop every 2.5 seconds
-          delay(2500);
+          // Run loop every 2 seconds
+          delay(2000);
+        } else {
+          // Not mobile
+          digitalWrite(GREEN, HIGH);
+          digitalWrite(BLUE, LOW);
+          delay(300);
+          digitalWrite(BLUE, HIGH);
+          delay(100);
         }
       } else {
         if(!gps.location.isValid()) {
           Serial.println(F("Waiting on location sync."));
-            digitalWrite(RED, HIGH);
-            delay(500);  
-            digitalWrite(RED, LOW);
-            delay(500);
+          ledErrorCode(1, 3, 1);
         }
         if(!gps.date.isValid()) {
           Serial.println(F("Waiting on date sync."));
+          ledErrorCode(1, 4, 1);
         }
         if(!gps.time.isValid()) {
           Serial.println(F("Waiting on time sync."));
+          ledErrorCode(1, 5, 1);
         }
 
         // Enable GPS dump when debugging
@@ -216,6 +238,8 @@ void initSD() {
   // Initialize the SD.
   if (!sd.begin(SD_CONFIG)) {
     Serial.println(F("Error initializing SD card..."));
+    // Error - show LED error code 12
+    ledErrorCode(1, 2, 10);
     sd.initErrorHalt(&Serial);
     return;
   } else {
@@ -231,7 +255,7 @@ void writeFile(String WriteData) {
   Data is stored in GMT time, so a post-conversion will have to be done.
 
   CSV Header is as follows:
-  Date [mm/dd/yyyy], Time [HH:MM:SS.ZZ], Latitude [deg], Longitude [deg]
+  Date [yyyy-mm-dd], Time [HH:MM:SS.ZZ], Latitude [deg], Longitude [deg], Speed [km/hr]
   **/
 
   Serial.print(F("Writing the following data to file: "));
@@ -249,9 +273,11 @@ void writeFile(String WriteData) {
     } else {
       delay(50); // prevents cluttering
       Serial.println(F("Unable to write file to SD card.")); // print error if SD card issue
+      ledErrorCode(2, 1, 5);
     }
   } else {
     Serial.println(F("Waiting for GPS date sync..."));
+    ledErrorCode(1, 4, 1);
   }
 }
 
@@ -267,4 +293,29 @@ void GPSDump() {
   Serial.println(gps.speed.mps()); // Speed in meters per second (double)
   Serial.print(F("Speed (km/hr): "));
   Serial.println(gps.speed.kmph()); // Speed in kilometers per hour (double)
+}
+
+// Flash LED sequence times to indicate an error code
+void ledErrorCode(int longFlash, int shortFlash, int cycles) {
+  // Turn off green LED (just in case it was already on)
+  digitalWrite(GREEN, HIGH);
+  for(int counter = 0; counter < cycles; counter++) {  
+    for(int i = 0; i < longFlash; i++) {
+        digitalWrite(BLUE, HIGH);
+        digitalWrite(RED, LOW);
+        delay(1000);  
+        digitalWrite(RED, HIGH);
+        delay(250);
+        for(int i = 0; i < shortFlash; i++) {
+          digitalWrite(BLUE, LOW);
+          delay(250);
+          digitalWrite(BLUE, HIGH);
+          delay(250);
+          digitalWrite(BLUE, LOW);
+        }
+    }
+  }
+
+  digitalWrite(RED, HIGH);
+  digitalWrite(BLUE, HIGH);
 }
