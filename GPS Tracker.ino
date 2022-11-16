@@ -13,6 +13,8 @@ Using the following libraries:
 - SPI
 - SdFat for exFAT support
 
+Geofence code provided by https://www.electroniclinic.com/geofencing-in-cars-using-arduino-gps-and-gsm-geofence-gps-tracker/ 
+
 This script will get the location, date and time and print it to a csv file on the sd card.
 It will update every 10 seconds. If the location has not changed, it will check every 10 seconds for a change, and if none is found, wait until mobile again.
 
@@ -88,6 +90,18 @@ TinyGPSPlus gps;
 #define GREEN 23
 #define LED_PWR 25
 
+// Set up our geofence for initial GPS location and zone
+float initialLatitude = 0;
+float initialLongitude = 0;
+float latitude, longitude;
+void getGps(float& latitude, float& longitude);
+bool outsideGeoFence = false;
+
+// Size of geofence (in meters)
+const float maxDistance = 20;
+
+// Create a timer to track
+
 void setup() {
   Serial.begin(SerialMonitorBaud);
   Serial1.begin(GPSBaud);
@@ -112,18 +126,13 @@ void setup() {
     ledErrorCode(1, 1, 1);
   }
 
-  if(Serial1.available()) {
-    Serial.println(F("Ready."));
-    Serial.println(F("---------------"));
-  }
-
   Serial.println(F("Booting..."));
   for(int i = 0; i < 10; i++) {
     Serial.print(F("."));
     digitalWrite(LED_BUILTIN, HIGH);
-    delay(100);
+    delay(50);
     digitalWrite(LED_BUILTIN, LOW);
-    delay(100);
+    delay(50);
   }
   
   // Initialize SD Card
@@ -136,32 +145,64 @@ void loop() {
     if(gps.encode(Serial1.read())) {
       if(gps.location.isValid() && gps.date.isValid() && gps.time.isValid()) {
         // Even though we might be getting a 'valid' GPS time sync, if the year we receive is 2000, then the time sync has not completed.
-        // In addition to this, wait until we are mobile (moving at over 2kmph)
-        // 5kmph for a reason: sometimes while obtaining a fix the speed is innacurately reported (0-4.5kmph) while stationary
-        // TODO: A better way to find out if we have moved from our initial starting zone would be to set a geofence during setup(), then proceed to loop(). Once we are outside of the geofence, start logging data.
-        if(gps.date.year() != '2000' && gps.speed.kmph() >= 5) {
-          String dataStr = ""; // data string for saving
-          dataStr += String(gps.date.year()) + "-"+ 
-                     String(gps.date.month()) + "-" + 
-                     String(gps.date.day()) + ",";
-          dataStr += String(gps.time.hour()) + ":" + 
-                     String(gps.time.minute()) + ":" + 
-                     String(gps.time.second()) + "." + 
-                     String(gps.time.centisecond()) + ",";
-          dataStr += String(gps.location.lat(), 7) + ","; // latitude
-          dataStr += String(gps.location.lng(), 7) + ","; // longitude
-          dataStr += String(gps.speed.kmph()); // speed
-          
-          // Print location data to serial
-          displayInfo(); 
+        // In addition to this, on the first loop(), determine our starting longitude and latitude, then build a geofence around that location. Once we have moved outside that geofence, begin logging.
+        if(gps.date.year() != '2000' && gps.location.isUpdated()) {
+          // Get 10 data points of longitude and latitude for accuracy, then use the average to determine our starting position
+          if(initialLatitude == 0 && initialLongitude == 0) {
+            int loops = 0;
+            while(loops < 10) {
+              if(Serial1.available() && gps.encode(Serial1.read()) && gps.location.isUpdated()) {
+                delay(250); // Wait 250ms between location updates to provide more accuracy on early GPS fix
+                initialLatitude += gps.location.lat();
+                initialLongitude += gps.location.lng();
+                loops++;
+              }
+            }
+            
+            initialLatitude = (initialLatitude / 10.0);
+            initialLongitude = (initialLongitude / 10.0);
 
-          // Flash green LED
-          digitalWrite(GREEN, LOW);
-          writeFile(dataStr);
-          delay(200);
+            Serial.println(F("Set initial longitude and latitude: "));
+            Serial.println(initialLatitude, 6);
+            Serial.println(initialLongitude, 6);
+          }
 
-          // Run loop every 2 seconds
-          delay(2000);
+          if(outsideGeoFence == false) {          
+            getGps(latitude, longitude);
+            float distance = getDistance(latitude, longitude, initialLatitude, initialLongitude);
+            Serial.print(F("Current distance from starting location: ")); 
+            Serial.print(distance);
+            Serial.println(F(" meters"));
+
+            if(distance > maxDistance) {
+              outsideGeoFence = true;
+            }
+          } else {
+            if(gps.time.isUpdated()) { // Check if the time is updated, this should prevent logging a duplicate data point
+              // We're outside of the geofence. Start logging!
+              String dataStr = ""; // data string for saving
+              dataStr += String(gps.date.year()) + "-"+ 
+                        String(gps.date.month()) + "-" + 
+                        String(gps.date.day()) + ",";
+              dataStr += String(gps.time.hour()) + ":" + 
+                        String(gps.time.minute()) + ":" + 
+                        String(gps.time.second()) + "." + 
+                        String(gps.time.centisecond()) + ",";
+              dataStr += String(gps.location.lat(), 7) + ","; // latitude
+              dataStr += String(gps.location.lng(), 7) + ","; // longitude
+              dataStr += String(gps.speed.kmph()); // speed
+
+              // Print location data to serial
+              displayInfo(); 
+
+              // Flash green LED
+              digitalWrite(GREEN, LOW);
+              writeFile(dataStr);
+
+              // Run loop every 2 seconds
+              delay(2000);
+            }
+          }
         } else {
           // Not mobile
           digitalWrite(GREEN, HIGH);
@@ -186,7 +227,6 @@ void loop() {
 
         // Enable GPS dump when debugging
         // GPSDump();
-        delay(2500);
       }
     }
   }
@@ -252,7 +292,7 @@ void writeFile(String WriteData) {
 
   /** 
   Create a file, with a filename of today's date
-  Data is stored in GMT time, so a post-conversion will have to be done.
+  Data is stored in UTC time, so a post-conversion will have to be done.
 
   CSV Header is as follows:
   Date [yyyy-mm-dd], Time [HH:MM:SS.ZZ], Latitude [deg], Longitude [deg], Speed [km/hr]
@@ -295,6 +335,60 @@ void GPSDump() {
   Serial.println(gps.speed.kmph()); // Speed in kilometers per hour (double)
 }
 
+// Calculate distance between two points
+float getDistance(float flat1, float flon1, float flat2, float flon2) {
+
+  // Variables
+  float dist_calc = 0;
+  float dist_calc2 = 0;
+  float diflat = 0;
+  float diflon = 0;
+
+  // Calculations
+  diflat  = radians(flat2-flat1);
+  flat1 = radians(flat1);
+  flat2 = radians(flat2);
+  diflon = radians((flon2) - (flon1));
+
+  dist_calc = (sin(diflat / 2.0) * sin(diflat / 2.0));
+  dist_calc2 = cos(flat1);
+  dist_calc2 *= cos(flat2);
+  dist_calc2 *= sin(diflon / 2.0);
+  dist_calc2 *= sin(diflon / 2.0);
+  dist_calc += dist_calc2;
+
+  dist_calc = (2*atan2(sqrt(dist_calc), sqrt(1.0 - dist_calc)));
+  
+  dist_calc *= 6371000.0; // Converting to meters
+
+  return dist_calc;
+}
+
+void getGps(float& latitude, float& longitude)
+{
+  // Can take up to 60 seconds
+  boolean newData = false;
+  for (unsigned long start = millis(); millis() - start < 2000;){
+    while (Serial1.available()){
+      if (gps.encode(Serial1.read())){
+        newData = true;
+        break;
+      }
+    }
+  }
+  
+  if (newData) {
+    latitude = gps.location.lat();
+    longitude = gps.location.lng();
+    newData = false;
+  }
+  else {
+    Serial.println("No GPS data is available");
+    latitude = 0;
+    longitude = 0;
+  }
+}
+
 // Flash LED sequence times to indicate an error code
 void ledErrorCode(int longFlash, int shortFlash, int cycles) {
   // Turn off green LED (just in case it was already on)
@@ -305,12 +399,12 @@ void ledErrorCode(int longFlash, int shortFlash, int cycles) {
         digitalWrite(RED, LOW);
         delay(1000);  
         digitalWrite(RED, HIGH);
-        delay(250);
+        delay(200);
         for(int i = 0; i < shortFlash; i++) {
           digitalWrite(BLUE, LOW);
-          delay(250);
+          delay(200);
           digitalWrite(BLUE, HIGH);
-          delay(250);
+          delay(200);
           digitalWrite(BLUE, LOW);
         }
     }
