@@ -15,6 +15,6 @@ Using the following libraries:
 Geofence code provided by https://www.electroniclinic.com/geofencing-in-cars-using-arduino-gps-and-gsm-geofence-gps-tracker/ 
 
 This script will get the location, date and time and print it to a csv file on the sd card.
-During boot it will create a geofence of 20 meters - this is our 'starting zone'.
+During boot it will create a geofence of 10 meters - this is our 'starting zone'.
 Once we are outside the starting zone (i.e. we are mobile), it will start logging the data.
 It will update every 2-3 seconds.
