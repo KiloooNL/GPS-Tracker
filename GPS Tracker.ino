@@ -2,21 +2,7 @@
 Simple GPS Tracker
 https://github.com/KiloooNL/GPS-Tracker
 
-Using the following hardware:
-- Arduino Nano BLE 33 - https://core-electronics.com.au/arduino-nano-33-ble.html
-- U-blox NEO-6M GPS Module - https://core-electronics.com.au/u-blox-neo-6m-gps-module.html 
-- SD Card reader - https://core-electronics.com.au/sd-card-module.html
-
-Using the following libraries:
-- TinyGPS+
-- Time
-- SPI
-- SdFat for exFAT support
-
-Geofence code provided by https://www.electroniclinic.com/geofencing-in-cars-using-arduino-gps-and-gsm-geofence-gps-tracker/ 
-
-This script will get the location, date and time and print it to a csv file on the sd card.
-It will update every 10 seconds. If the location has not changed, it will check every 10 seconds for a change, and if none is found, wait until mobile again.
+See https://github.com/KiloooNL/GPS-Tracker/blob/main/README.md for credits, hardware and libraries.
 
 Error codes are shown by the red and blue LED and are as follows
 1 long red flash = 10 unit
@@ -98,9 +84,10 @@ void getGps(float& latitude, float& longitude);
 bool outsideGeoFence = false;
 
 // Size of geofence (in meters)
-const float maxDistance = 20;
+const float maxDistance = 10;
 
 // Create a timer to track
+unsigned long lastDisplayTime = 0;
 
 void setup() {
   Serial.begin(SerialMonitorBaud);
@@ -132,7 +119,6 @@ void setup() {
     digitalWrite(LED_BUILTIN, HIGH);
     delay(50);
     digitalWrite(LED_BUILTIN, LOW);
-    delay(50);
   }
   
   // Initialize SD Card
@@ -147,6 +133,8 @@ void loop() {
         // Even though we might be getting a 'valid' GPS time sync, if the year we receive is 2000, then the time sync has not completed.
         // In addition to this, on the first loop(), determine our starting longitude and latitude, then build a geofence around that location. Once we have moved outside that geofence, begin logging.
         if(gps.date.year() != '2000' && gps.location.isUpdated()) {
+          digitalWrite(BLUE, HIGH);
+
           // Get 10 data points of longitude and latitude for accuracy, then use the average to determine our starting position
           if(initialLatitude == 0 && initialLongitude == 0) {
             int loops = 0;
@@ -178,7 +166,7 @@ void loop() {
               outsideGeoFence = true;
             }
           } else {
-            if(gps.time.isUpdated()) { // Check if the time is updated, this should prevent logging a duplicate data point
+            if(gps.time.isUpdated() && gps.speed.kmph() > 1 && (millis() - lastDisplayTime >= 2000)) { // Check if the time is updated, this should prevent logging a duplicate data point
               // We're outside of the geofence. Start logging!
               String dataStr = ""; // data string for saving
               dataStr += String(gps.date.year()) + "-"+ 
@@ -191,6 +179,9 @@ void loop() {
               dataStr += String(gps.location.lat(), 7) + ","; // latitude
               dataStr += String(gps.location.lng(), 7) + ","; // longitude
               dataStr += String(gps.speed.kmph()); // speed
+              dataStr += String(gps.location.age()); // age
+              dataStr += String(gps.satellites.value()); // Number of satellites in use
+              dataStr += String(gps.hdop.value()); // Horizontal Dim. of Precision
 
               // Print location data to serial
               displayInfo(); 
@@ -198,18 +189,13 @@ void loop() {
               // Flash green LED
               digitalWrite(GREEN, LOW);
               writeFile(dataStr);
-
-              // Run loop every 2 seconds
-              delay(2000);
+              lastDisplayTime = millis();
             }
           }
         } else {
-          // Not mobile
+          // Not mobile - show blue LED
           digitalWrite(GREEN, HIGH);
           digitalWrite(BLUE, LOW);
-          delay(300);
-          digitalWrite(BLUE, HIGH);
-          delay(100);
         }
       } else {
         if(!gps.location.isValid()) {
@@ -295,7 +281,7 @@ void writeFile(String WriteData) {
   Data is stored in UTC time, so a post-conversion will have to be done.
 
   CSV Header is as follows:
-  Date [yyyy-mm-dd], Time [HH:MM:SS.ZZ], Latitude [deg], Longitude [deg], Speed [km/hr]
+  Date [yyyy-mm-dd], Time [HH:MM:SS.ZZ], Latitude [deg], Longitude [deg], Speed [km/hr], Age (fix), Satellites, HDOP
   **/
 
   Serial.print(F("Writing the following data to file: "));
@@ -393,6 +379,7 @@ void getGps(float& latitude, float& longitude)
 void ledErrorCode(int longFlash, int shortFlash, int cycles) {
   // Turn off green LED (just in case it was already on)
   digitalWrite(GREEN, HIGH);
+
   for(int counter = 0; counter < cycles; counter++) {  
     for(int i = 0; i < longFlash; i++) {
         digitalWrite(BLUE, HIGH);
