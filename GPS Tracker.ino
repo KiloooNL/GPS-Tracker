@@ -134,6 +134,8 @@ void loop() {
         // In addition to this, on the first loop(), determine our starting longitude and latitude, then build a geofence around that location. Once we have moved outside that geofence, begin logging.
         if(gps.date.year() != '2000' && gps.location.isUpdated()) {
           digitalWrite(BLUE, HIGH);
+          // Flash green LED
+          digitalWrite(GREEN, LOW);
 
           // Get 10 data points of longitude and latitude for accuracy, then use the average to determine our starting position
           if(initialLatitude == 0 && initialLongitude == 0) {
@@ -166,7 +168,7 @@ void loop() {
               outsideGeoFence = true;
             }
           } else {
-            if(gps.time.isUpdated() && gps.speed.kmph() > 1 && (millis() - lastDisplayTime >= 2000)) { // Check if the time is updated, this should prevent logging a duplicate data point
+            if(gps.time.isUpdated() && gps.speed.kmph() > 1 && (millis() - lastDisplayTime >= 2000) && gps.location.age() < 1852 && gps.satellites.value() > 0) { // Check if the time is updated, this should prevent logging a duplicate data point
               // We're outside of the geofence. Start logging!
               String dataStr = ""; // data string for saving
               dataStr += String(gps.date.year()) + "-"+ 
@@ -178,24 +180,24 @@ void loop() {
                         String(gps.time.centisecond()) + ",";
               dataStr += String(gps.location.lat(), 7) + ","; // latitude
               dataStr += String(gps.location.lng(), 7) + ","; // longitude
-              dataStr += String(gps.speed.kmph()); // speed
-              dataStr += String(gps.location.age()); // age
-              dataStr += String(gps.satellites.value()); // Number of satellites in use
+              dataStr += String(gps.speed.kmph()) + ","; // speed
+              dataStr += String(gps.location.age()) + ","; // age
+              dataStr += String(gps.satellites.value()) + ","; // Number of satellites in use
               dataStr += String(gps.hdop.value()); // Horizontal Dim. of Precision
 
               // Print location data to serial
               displayInfo(); 
 
-              // Flash green LED
-              digitalWrite(GREEN, LOW);
               writeFile(dataStr);
               lastDisplayTime = millis();
             }
           }
         } else {
-          // Not mobile - show blue LED
-          digitalWrite(GREEN, HIGH);
-          digitalWrite(BLUE, LOW);
+          if(gps.speed.kmph() < 5) {
+            // Not mobile - show blue LED
+            digitalWrite(GREEN, HIGH);
+            digitalWrite(BLUE, LOW);
+          }
         }
       } else {
         if(!gps.location.isValid()) {
@@ -290,6 +292,7 @@ void writeFile(String WriteData) {
   // Make sure our current time is valid, otherwise we are writing useless data
   if (gps.time.isValid() && gps.date.year() != '2000') {
     // Write file to SD card - format: YYMMDD
+    // TODO: Change filename to a better format, as SDFat library supports > 8 char filenames (see: https://forum.arduino.cc/t/sdfat-long-file-name-length-limit-is-255-chars-including-extension/546132)
     String name = "";
     name += String(gps.date.year()) + String(gps.date.month()) + String(gps.date.day()) + ".csv";
     
@@ -367,8 +370,7 @@ void getGps(float& latitude, float& longitude)
     latitude = gps.location.lat();
     longitude = gps.location.lng();
     newData = false;
-  }
-  else {
+  } else {
     Serial.println("No GPS data is available");
     latitude = 0;
     longitude = 0;
@@ -377,6 +379,7 @@ void getGps(float& latitude, float& longitude)
 
 // Flash LED sequence times to indicate an error code
 void ledErrorCode(int longFlash, int shortFlash, int cycles) {
+
   // Turn off green LED (just in case it was already on)
   digitalWrite(GREEN, HIGH);
 
