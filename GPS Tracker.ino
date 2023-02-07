@@ -11,9 +11,10 @@ For example: 1 long, 2 short = error code 12
 
 11: Serial error (No communication from GPS unit)
 12: SD Card error (No card, wrong chip select pin, or wiring error)
-13: Waiting for location sync
-14: Waiting on date sync
-15: Waiting on time sync
+13: Waiting on satellites (over 3 satellites needed)
+14: Waiting for location sync
+15: Waiting on date sync
+16: Waiting on time sync
 21: SD card write error
 **/
 
@@ -84,7 +85,7 @@ void getGps(float& latitude, float& longitude);
 bool outsideGeoFence = false;
 
 // Size of geofence (in meters)
-const float maxDistance = 10;
+const float maxDistance = 20;
 
 // Create a timer to track
 unsigned long lastDisplayTime = 0;
@@ -110,7 +111,7 @@ void setup() {
 
   // Wait until serial port is open
   while(!Serial1) {
-    ledErrorCode(1, 1, 1);
+    ledErrorCode(1, 1, 2);
   }
 
   Serial.println(F("Booting..."));
@@ -122,31 +123,29 @@ void setup() {
   }
   
   // Initialize SD Card
-  initSD();
+  initSD(); 
 }
 
 // Start the loop. Only work if GPS data is valid.
 void loop() {
   while (Serial1.available()) {
     if(gps.encode(Serial1.read())) {
-      if(gps.location.isValid() && gps.date.isValid() && gps.time.isValid()) {
-        // Even though we might be getting a 'valid' GPS time sync, if the year we receive is 2000, then the time sync has not completed.
-        // In addition to this, on the first loop(), determine our starting longitude and latitude, then build a geofence around that location. Once we have moved outside that geofence, begin logging.
-        if(gps.date.year() != '2000' && gps.location.isUpdated()) {
+      if(gps.location.isValid() && gps.date.isValid() && gps.time.isValid()) { // Run accuracyCheck() which validates if our GPS data is useable
+        // On the first loop(), determine our starting longitude and latitude, then build a geofence around that location. Once we have moved outside that geofence, begin logging.
+        if(gps.date.year() != '2000' && gps.location.isUpdated() && accuracyCheck()) {
           digitalWrite(BLUE, HIGH);
           // Flash green LED
           digitalWrite(GREEN, LOW);
 
           // Get 10 data points of longitude and latitude for accuracy, then use the average to determine our starting position
           if(initialLatitude == 0 && initialLongitude == 0) {
+            Serial.println(F("Initialized and ready to set geofence."));
             int loops = 0;
             while(loops < 10) {
-              if(Serial1.available() && gps.encode(Serial1.read()) && gps.location.isUpdated()) {
                 delay(250); // Wait 250ms between location updates to provide more accuracy on early GPS fix
                 initialLatitude += gps.location.lat();
                 initialLongitude += gps.location.lng();
                 loops++;
-              }
             }
             
             initialLatitude = (initialLatitude / 10.0);
@@ -157,7 +156,7 @@ void loop() {
             Serial.println(initialLongitude, 6);
           }
 
-          if(outsideGeoFence == false) {          
+          if(outsideGeoFence == false && accuracyCheck()) {          
             getGps(latitude, longitude);
             float distance = getDistance(latitude, longitude, initialLatitude, initialLongitude);
             Serial.print(F("Current distance from starting location: ")); 
@@ -166,9 +165,12 @@ void loop() {
 
             if(distance > maxDistance) {
               outsideGeoFence = true;
+              Serial.print(F("Now outside geofence. Distance: ")); 
+              Serial.print(distance);
+              Serial.println(F(" meters"));
             }
           } else {
-            if(gps.time.isUpdated() && gps.speed.kmph() > 1 && (millis() - lastDisplayTime >= 2000) && gps.location.age() < 1852 && gps.satellites.value() > 0) { // Check if the time is updated, this should prevent logging a duplicate data point
+            if(accuracyCheck() && (millis() - lastDisplayTime >= 2000)) { // Check if the time is updated, this should prevent logging a duplicate data point
               // We're outside of the geofence. Start logging!
               String dataStr = ""; // data string for saving
               dataStr += String(gps.date.year()) + "-"+ 
@@ -185,9 +187,6 @@ void loop() {
               dataStr += String(gps.satellites.value()) + ","; // Number of satellites in use
               dataStr += String(gps.hdop.value()); // Horizontal Dim. of Precision
 
-              // Print location data to serial
-              displayInfo(); 
-
               writeFile(dataStr);
               lastDisplayTime = millis();
             }
@@ -197,24 +196,26 @@ void loop() {
             // Not mobile - show blue LED
             digitalWrite(GREEN, HIGH);
             digitalWrite(BLUE, LOW);
+            delay(1000);
           }
         }
       } else {
-        if(!gps.location.isValid()) {
-          Serial.println(F("Waiting on location sync."));
+        if(gps.satellites.value() < 3) {
+          Serial.print(F("Waiting on satellites. Current satellites: "));
+          Serial.println(gps.satellites.value());
           ledErrorCode(1, 3, 1);
+        } else if(!gps.location.isValid()) {
+          Serial.println(F("Waiting on location sync."));
+          ledErrorCode(1, 4, 1);
         }
         if(!gps.date.isValid()) {
           Serial.println(F("Waiting on date sync."));
-          ledErrorCode(1, 4, 1);
+          ledErrorCode(1, 5, 1);
         }
         if(!gps.time.isValid()) {
           Serial.println(F("Waiting on time sync."));
-          ledErrorCode(1, 5, 1);
+          ledErrorCode(1, 6, 1);
         }
-
-        // Enable GPS dump when debugging
-        // GPSDump();
       }
     }
   }
@@ -277,7 +278,6 @@ void initSD() {
 
 // Function for writing data to SD card
 void writeFile(String WriteData) {
-
   /** 
   Create a file, with a filename of today's date
   Data is stored in UTC time, so a post-conversion will have to be done.
@@ -286,13 +286,13 @@ void writeFile(String WriteData) {
   Date [yyyy-mm-dd], Time [HH:MM:SS.ZZ], Latitude [deg], Longitude [deg], Speed [km/hr], Age (fix), Satellites, HDOP
   **/
 
-  Serial.print(F("Writing the following data to file: "));
-  Serial.println(WriteData);
-
   // Make sure our current time is valid, otherwise we are writing useless data
-  if (gps.time.isValid() && gps.date.year() != '2000') {
-    // Write file to SD card - format: YYMMDD
-    // TODO: Change filename to a better format, as SDFat library supports > 8 char filenames (see: https://forum.arduino.cc/t/sdfat-long-file-name-length-limit-is-255-chars-including-extension/546132)
+  // Write file to SD card - format: YYMMDD
+  // TODO: Change filename to a better format, as SDFat library supports > 8 char filenames (see: https://forum.arduino.cc/t/sdfat-long-file-name-length-limit-is-255-chars-including-extension/546132)
+  if(gps.time.isValid() && gps.date.year() != '2000') {
+    Serial.print(F("Writing the following data to file: "));
+    Serial.println(WriteData);
+    
     String name = "";
     name += String(gps.date.year()) + String(gps.date.month()) + String(gps.date.day()) + ".csv";
     
@@ -304,9 +304,6 @@ void writeFile(String WriteData) {
       Serial.println(F("Unable to write file to SD card.")); // print error if SD card issue
       ledErrorCode(2, 1, 5);
     }
-  } else {
-    Serial.println(F("Waiting for GPS date sync..."));
-    ledErrorCode(1, 4, 1);
   }
 }
 
@@ -318,10 +315,16 @@ void GPSDump() {
   Serial.println(gps.location.lng(), 7); // Longitude in degrees (double)
   Serial.print(F("Date: "));
   Serial.println(gps.date.value()); // Raw date in DDMMYY format (u32)
-  Serial.print(F("Speed (mps): "));
-  Serial.println(gps.speed.mps()); // Speed in meters per second (double)
+  Serial.print(F("Time: "));
+  Serial.println(gps.time.value());
   Serial.print(F("Speed (km/hr): "));
   Serial.println(gps.speed.kmph()); // Speed in kilometers per hour (double)
+  Serial.print(F("Location age: "));
+  Serial.println(gps.location.age());
+  Serial.print(F("Satellites: "));
+  Serial.println(gps.satellites.value()); // Satellites
+  Serial.print(F("HDOP: "));
+  Serial.println(gps.hdop.value()); // Satellites
 }
 
 // Calculate distance between two points
@@ -379,7 +382,6 @@ void getGps(float& latitude, float& longitude)
 
 // Flash LED sequence times to indicate an error code
 void ledErrorCode(int longFlash, int shortFlash, int cycles) {
-
   // Turn off green LED (just in case it was already on)
   digitalWrite(GREEN, HIGH);
 
@@ -400,6 +402,39 @@ void ledErrorCode(int longFlash, int shortFlash, int cycles) {
     }
   }
 
+
   digitalWrite(RED, HIGH);
   digitalWrite(BLUE, HIGH);
+}
+
+bool accuracyCheck() {
+  if(gps.time.isUpdated()
+    && gps.speed.kmph() > 2 
+    && gps.location.age() < 1500 
+    && gps.satellites.value() > 2 
+    && (gps.hdop.value() / 100) < 4) {
+     Serial.println(F("Accuraccy check passed."));
+     return true;
+  } else {
+    Serial.println(F("Accuracy check did not pass."));
+    if(!gps.time.isUpdated()) {
+      Serial.println(F("Reason: Time is not updated."));
+    }
+    if(gps.speed.kmph() < 2) {
+      Serial.println(F("Reason: Speed is under 2kmph."));
+    }
+    if(gps.location.age() > 1500) {
+      Serial.println(F("Reason: Location age is over 1500ms."));
+    }
+    if(gps.satellites.value() < 3) {
+      Serial.println(F("Reason: Under 2 satellites available."));
+    }
+    if((gps.hdop.value() / 100) > 4) {
+      Serial.println(F("Reason: HDOP value is too high."));
+    }
+
+    GPSDump();
+    delay(100);
+    return false;
+  }
 }
