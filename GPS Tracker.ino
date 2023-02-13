@@ -83,11 +83,14 @@ float initialLongitude = 0;
 float latitude, longitude;
 void getGps(float& latitude, float& longitude);
 bool outsideGeoFence = false;
+bool firstSave = true;
+String name = "";
+String tmpName = "";
 
 // Size of geofence (in meters)
 const float maxDistance = 20;
 
-// Create a timer to track
+// Various timers to use instead of delay
 unsigned long lastDisplayTime = 0;
 
 void setup() {
@@ -130,9 +133,9 @@ void setup() {
 void loop() {
   while (Serial1.available()) {
     if(gps.encode(Serial1.read())) {
-      if(gps.location.isValid() && gps.date.isValid() && gps.time.isValid()) { // Run accuracyCheck() which validates if our GPS data is useable
+      if(gps.location.isValid() && gps.location.isUpdated() && gps.date.isValid() && gps.time.isValid()) { // Run accuracyCheck() which validates if our GPS data is useable
         // On the first loop(), determine our starting longitude and latitude, then build a geofence around that location. Once we have moved outside that geofence, begin logging.
-        if(gps.date.year() != '2000' && gps.location.isUpdated() && accuracyCheck()) {
+        if(gps.date.year() != '2000' && accuracyCheck()) {
           digitalWrite(BLUE, HIGH);
           // Flash green LED
           digitalWrite(GREEN, LOW);
@@ -142,10 +145,10 @@ void loop() {
             Serial.println(F("Initialized and ready to set geofence."));
             int loops = 0;
             while(loops < 10) {
-                delay(250); // Wait 250ms between location updates to provide more accuracy on early GPS fix
-                initialLatitude += gps.location.lat();
-                initialLongitude += gps.location.lng();
-                loops++;
+              delay(250);
+              initialLatitude += gps.location.lat();
+              initialLongitude += gps.location.lng();
+              loops++;
             }
             
             initialLatitude = (initialLatitude / 10.0);
@@ -156,7 +159,7 @@ void loop() {
             Serial.println(initialLongitude, 6);
           }
 
-          if(outsideGeoFence == false && accuracyCheck()) {          
+          if(outsideGeoFence == false) {          
             getGps(latitude, longitude);
             float distance = getDistance(latitude, longitude, initialLatitude, initialLongitude);
             Serial.print(F("Current distance from starting location: ")); 
@@ -170,7 +173,7 @@ void loop() {
               Serial.println(F(" meters"));
             }
           } else {
-            if(accuracyCheck() && (millis() - lastDisplayTime >= 2000)) { // Check if the time is updated, this should prevent logging a duplicate data point
+            if(millis() - lastDisplayTime >= 2000) { // Check if the time is updated, this should prevent logging a duplicate data point
               // We're outside of the geofence. Start logging!
               String dataStr = ""; // data string for saving
               dataStr += String(gps.date.year()) + "-"+ 
@@ -196,7 +199,7 @@ void loop() {
             // Not mobile - show blue LED
             digitalWrite(GREEN, HIGH);
             digitalWrite(BLUE, LOW);
-            delay(1000);
+            delay(500);
           }
         }
       } else {
@@ -290,14 +293,41 @@ void writeFile(String WriteData) {
   // Write file to SD card - format: YYMMDD
   // TODO: Change filename to a better format, as SDFat library supports > 8 char filenames (see: https://forum.arduino.cc/t/sdfat-long-file-name-length-limit-is-255-chars-including-extension/546132)
   if(gps.time.isValid() && gps.date.year() != '2000') {
-    Serial.print(F("Writing the following data to file: "));
-    Serial.println(WriteData);
-    
-    String name = "";
-    name += String(gps.date.year()) + String(gps.date.month()) + String(gps.date.day()) + ".csv";
-    
+    if(firstSave) {
+      String month = "";
+      String day = "";
+      if(String(gps.date.month() < 10)) {
+        month = "0" + String(gps.date.month()); 
+      } else {
+        month = String(gps.date.month());
+      }
+
+      if(String(gps.date.day() < 10)) {
+        day = "0" + String(gps.date.day());
+      } else {
+        day = String(gps.date.day());
+      }
+
+      String DateString = String(gps.date.year()) + "-" + month + "-" + day;
+      tmpName = DateString + ".csv";
+      // check if file exists. if it does, create a new one YYMMDD_x.csv
+      int i = 1;
+      while(sd.exists(tmpName)) {
+          tmpName = DateString + "_" + i + ".csv";
+          Serial.print(F("Seeing if file exists: "));
+          Serial.println(tmpName);
+          i++;
+      }
+      name = tmpName;
+      firstSave = false;
+
+      Serial.print("File does not exist. Creating a new one. New file name: ");
+      Serial.println(name);
+    }
     if (file.open(name.c_str(), FILE_WRITE)) {
       file.println(WriteData); // write data to file
+      Serial.print(F("Wrote the following data to file: "));
+      Serial.println(WriteData);
       file.close(); // close file before continuing 
     } else {
       delay(50); // prevents cluttering
@@ -408,23 +438,19 @@ void ledErrorCode(int longFlash, int shortFlash, int cycles) {
 }
 
 bool accuracyCheck() {
-  if(gps.time.isUpdated()
-    && gps.speed.kmph() > 2 
-    && gps.location.age() < 1500 
+  if(gps.speed.kmph() > 2
+    && gps.location.age() < 1800 
     && gps.satellites.value() > 2 
     && (gps.hdop.value() / 100) < 4) {
-     Serial.println(F("Accuraccy check passed."));
+     Serial.println(F("Accuracy check passed."));
      return true;
   } else {
     Serial.println(F("Accuracy check did not pass."));
-    if(!gps.time.isUpdated()) {
-      Serial.println(F("Reason: Time is not updated."));
-    }
     if(gps.speed.kmph() < 2) {
       Serial.println(F("Reason: Speed is under 2kmph."));
     }
     if(gps.location.age() > 1500) {
-      Serial.println(F("Reason: Location age is over 1500ms."));
+      Serial.println(F("Reason: Location age is over 1800ms."));
     }
     if(gps.satellites.value() < 3) {
       Serial.println(F("Reason: Under 2 satellites available."));
@@ -434,7 +460,7 @@ bool accuracyCheck() {
     }
 
     GPSDump();
-    delay(100);
+    
     return false;
   }
 }
