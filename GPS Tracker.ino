@@ -419,23 +419,35 @@ void ledErrorCode(int longFlash, int shortFlash, int cycles) {
     for(int i = 0; i < longFlash; i++) {
         digitalWrite(BLUE, HIGH);
         digitalWrite(RED, LOW);
-        delay(1000);  
+        unsigned long startTime = millis(); // Get start time
+        while (millis() - startTime < 1000) { // Wait 1 second
+          // Do nothing
+        }
         digitalWrite(RED, HIGH);
-        delay(200);
+        startTime = millis(); // Get start time
+        while (millis() - startTime < 200) { // Wait 200ms
+          // Do nothing
+        }
         for(int i = 0; i < shortFlash; i++) {
           digitalWrite(BLUE, LOW);
-          delay(200);
+          startTime = millis(); // Get start time
+          while (millis() - startTime < 200) { // Wait 200ms
+            // Do nothing
+          }
           digitalWrite(BLUE, HIGH);
-          delay(200);
+          startTime = millis(); // Get start time
+          while (millis() - startTime < 200) { // Wait 200ms
+            // Do nothing
+          }
           digitalWrite(BLUE, LOW);
         }
     }
   }
 
-
   digitalWrite(RED, HIGH);
   digitalWrite(BLUE, HIGH);
 }
+
 
 bool accuracyCheck() {
   if(gps.speed.kmph() > 2
