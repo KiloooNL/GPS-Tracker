@@ -85,14 +85,14 @@ String name = "";
 String tmpName = "";
 
 // Size of geofence (in meters)
-const float maxDistance = 15;
+const float maxDistance = 20;
 
 // Various timers to use instead of delay
 unsigned long lastDisplayTime = 0;
 
 // Use a macro for debugging, so that in production we can disable Serial.print functions freeing up memory.
 // See this post: https://forum.arduino.cc/t/is-the-serial-println-output-buffered-when-not-connected-to-the-serial-console/966821/3 
-#define DEBUG 0 // Set to 0 for production and 1 for debugging
+#define DEBUG 1 // Set to 0 for production and 1 for debugging
 
 #if DEBUG
 #define D_SerialBegin(...) Serial.begin(__VA_ARGS__);
@@ -141,9 +141,10 @@ void loop() {
       if(gps.location.isValid() && gps.location.isUpdated() && gps.date.isValid() && gps.time.isValid()) {
         int numSatellites = gps.satellites.value();
         float hdop = gps.hdop.value() / 100;
-        
+
         // On the first loop(), determine our starting longitude and latitude, then build a geofence around that location. Once we have moved outside that geofence, begin logging.
-        if(gps.date.year() > 2022 && numSatellites >= 4 && hdop < 5.0 && gps.location.age() < 1800) {
+        if(gps.date.year() > '2022' && numSatellites >= 4 && hdop < 5.0 && gps.speed.isValid() && gps.speed.kmph() > 2 && gps.location.age() < 1800) {
+          D_println(F("Good GPS fix"));
           digitalWrite(BLUE, HIGH);
           // Flash green LED
           digitalWrite(GREEN, LOW);
@@ -181,7 +182,7 @@ void loop() {
               D_println(F(" meters"));
             }
           } else {
-            if(millis() - lastDisplayTime >= 2000 && gps.speed.kmph() > 2) { // Log data every 2 seconds
+            if(millis() - lastDisplayTime >= 2000) { // Log data every 2 seconds
               String dataStr = ""; // data string for saving
               dataStr += String(gps.date.year()) + "-"+ 
                         String(gps.date.month()) + "-" + 
@@ -199,11 +200,6 @@ void loop() {
 
               writeFile(dataStr);
               lastDisplayTime = millis();
-            } else {
-                if(gps.speed.kmph() < 2) {
-                  D_print(F("Speed is under 2kmph. Current speed: "));
-                  D_println(gps.speed.kmph());
-              }
             }
           }
         } else {
@@ -212,19 +208,19 @@ void loop() {
             D_println(numSatellites);
             ledErrorCode(1, 3, 1);
           } 
-          if(hdop >= 5) {
+          if(hdop > 5) {
             D_println(F("HDOP value is too high. Current HDOP:"));
             D_println(hdop);
           }
 
-          if(gps.location.age() >= 1800) {
-            D_print(F("Location age is over 1800ms. Current location age: "));
-            D_println(gps.location.age());
+          if(gps.speed.kmph() < 2) {
+            D_print(F("Speed is under 2kmph. Current speed: "));
+            D_println(gps.speed.kmph());
           }
 
-          if(gps.date.year() < '2022') {
-            D_print(F("Current year is not valid. Year received: "));
-            D_println(gps.date.year());
+          if(gps.location.age() > 1800) {
+            D_print(F("Location age is over 1800ms. Current location age: "));
+            D_println(gps.location.age());
           }
         }
       } else {
@@ -284,26 +280,21 @@ void writeFile(String WriteData) {
       day = String(gps.date.day());
     }
 
-    String DateString = String(gps.date.year()) + "-" + month + "-" + day;
-    tmpName = DateString + ".csv";
-    // Check if a file with this naming format exists, keep iterating until one is not found then create it.
-    int i = 1;
-    while(sd.exists(tmpName)) {
-        tmpName = DateString + "_" + i + ".csv";
-        D_print(F("Seeing if file exists: "));
-        D_println(tmpName);
-        i++;
-    }
-    name = tmpName;
-    firstSave = false;
+    String name = String(gps.date.year()) + "-" + month + "-" + day + ".csv";
 
     D_print("File does not exist. Creating a new one. New file name: ");
     D_println(name);
   }
   if (file.open(name.c_str(), FILE_WRITE)) {
-    file.println(WriteData); // write data to file
-    D_print(F("Wrote the following data to file: "));
-    D_println(WriteData);
+    if(firstSave) {
+      // ########## is a header used to split the array of each trip in post-processing
+      file.println("##########");
+      firstSave = false;
+    } else {
+      file.println(WriteData); // write data to file
+      D_print(F("Wrote the following data to file: "));
+      D_println(WriteData);
+    }
     file.close(); // close file before continuing 
   } else {
     delay(50); // prevents cluttering
