@@ -15,6 +15,8 @@ For example: 1 long, 2 short = error code 12
 14: Waiting for location sync
 15: Waiting on date sync
 16: Waiting on time sync
+17: HDOP value too high
+19: Speed too low
 21: SD card write error
 **/
 
@@ -82,17 +84,20 @@ void getGps(float& latitude, float& longitude);
 bool outsideGeoFence = false;
 bool firstSave = true;
 String name = "";
-String tmpName = "";
 
-// Size of geofence (in meters)
-const float maxDistance = 20;
+// Constant numbers
+const float maxDistance = 20;     // Default: 20
+const int minSpeed = 5;           // Default: 5
+const int minSatellites = 4;      // Default: 4
+const float maxHDOP = 5.0;        // Default: 5.0
+const int maxLocationAge = 1800;  // Default: 1800
 
 // Various timers to use instead of delay
 unsigned long lastDisplayTime = 0;
 
 // Use a macro for debugging, so that in production we can disable Serial.print functions freeing up memory.
 // See this post: https://forum.arduino.cc/t/is-the-serial-println-output-buffered-when-not-connected-to-the-serial-console/966821/3 
-#define DEBUG 1 // Set to 0 for production and 1 for debugging
+#define DEBUG 0 // Set to 0 for production and 1 for debugging
 
 #if DEBUG
 #define D_SerialBegin(...) Serial.begin(__VA_ARGS__);
@@ -143,15 +148,17 @@ void loop() {
         float hdop = gps.hdop.value() / 100;
 
         // On the first loop(), determine our starting longitude and latitude, then build a geofence around that location. Once we have moved outside that geofence, begin logging.
-        if(gps.date.year() > '2022' && numSatellites >= 4 && hdop < 5.0 && gps.speed.isValid() && gps.speed.kmph() > 2 && gps.location.age() < 1800) {
+        if(numSatellites >= minSatellites && hdop < maxHDOP && gps.speed.isValid() && gps.speed.kmph() > minSpeed && gps.location.age() < maxLocationAge) {
           D_println(F("Good GPS fix"));
+
+          // Turn off blue LED in case it was already on, then turn on green LED (success)
           digitalWrite(BLUE, HIGH);
-          // Flash green LED
           digitalWrite(GREEN, LOW);
 
           // Get 10 data points of longitude and latitude for accuracy, then use the average to determine our starting position
           if(initialLatitude == 0 && initialLongitude == 0) {
             D_println(F("Initialized and ready to set geofence."));
+            writeLog("Initialized and ready to set geofence.");
             int loops = 0;
             while(loops < 10) {
               delay(250);
@@ -166,6 +173,9 @@ void loop() {
             D_println(F("Set initial longitude and latitude: "));
             D_println(initialLatitude, 6);
             D_println(initialLongitude, 6);
+            if(DEBUG) {
+              writeLog("Set initial longitude and latitude.");
+            }
           }
 
           if(outsideGeoFence == false) {          
@@ -180,6 +190,9 @@ void loop() {
               D_print(F("Now outside geofence. Distance: ")); 
               D_print(distance);
               D_println(F(" meters"));
+              if(DEBUG) {
+                writeLog("Now outside of geofence and will begin logging.");
+              }
             }
           } else {
             if(millis() - lastDisplayTime >= 2000) { // Log data every 2 seconds
@@ -203,24 +216,28 @@ void loop() {
             }
           }
         } else {
-          if(numSatellites < 4) {
+          if(numSatellites < minSatellites) {
             D_print(F("Waiting on satellites. Current satellites: "));
             D_println(numSatellites);
             ledErrorCode(1, 3, 1);
           } 
-          if(hdop > 5) {
+          if(hdop > maxHDOP) {
             D_println(F("HDOP value is too high. Current HDOP:"));
             D_println(hdop);
+            ledErrorCode(1, 7, 1);
           }
 
-          if(gps.speed.kmph() < 2) {
-            D_print(F("Speed is under 2kmph. Current speed: "));
+          if(gps.speed.kmph() < minSpeed || !gps.speed.isValid()) {
+            D_print(F("Speed is under 5kmph or not valid. Current speed: "));
             D_println(gps.speed.kmph());
+            digitalWrite(GREEN, HIGH);
+            digitalWrite(BLUE, LOW);
           }
 
-          if(gps.location.age() > 1800) {
+          if(gps.location.age() > maxLocationAge) {
             D_print(F("Location age is over 1800ms. Current location age: "));
             D_println(gps.location.age());
+            ledErrorCode(1, 8, 1);
           }
         }
       } else {
@@ -268,23 +285,25 @@ void writeFile(String WriteData) {
   if(firstSave) {
     String month = "";
     String day = "";
+
     if(String(gps.date.month() < 10)) {
       month = "0" + String(gps.date.month()); 
     } else {
       month = String(gps.date.month());
     }
 
-    if(String(gps.date.day() < 10)) {
+    if(gps.date.day() < 10) {
       day = "0" + String(gps.date.day());
     } else {
       day = String(gps.date.day());
     }
 
-    String name = String(gps.date.year()) + "-" + month + "-" + day + ".csv";
+    name = String(gps.date.year()) + "-" + month + "-" + day + ".csv";
 
     D_print("File does not exist. Creating a new one. New file name: ");
     D_println(name);
   }
+  
   if (file.open(name.c_str(), FILE_WRITE)) {
     if(firstSave) {
       // ########## is a header used to split the array of each trip in post-processing
@@ -300,6 +319,17 @@ void writeFile(String WriteData) {
     delay(50); // prevents cluttering
     D_println(F("Unable to write file to SD card.")); // print error if SD card issue
     ledErrorCode(2, 1, 5);
+  }
+}
+
+void writeLog(String WriteData) {
+  String logFile = "log.txt";
+
+  if(file.open(logFile.c_str(), FILE_WRITE)) {
+    file.println(WriteData);
+    file.close();
+  } else {
+    delay(50);
   }
 }
 
@@ -357,8 +387,30 @@ void getGps(float& latitude, float& longitude)
 }
 
 void ledErrorCode(int longFlash, int shortFlash, int cycles) {
-  // Turn off green LED (just in case it was already on)
+  // Turn off all LEDs, in case they were already on
   digitalWrite(GREEN, HIGH);
+  digitalWrite(RED, HIGH);
+  digitalWrite(BLUE, HIGH);
+
+  // If debugging is enabled, log the error code to log.txt
+  if(DEBUG) {
+    String logInfo = "";
+    logInfo += "[";
+    logInfo += gps.date.year();
+    logInfo += "-";
+    logInfo += gps.date.month();
+    logInfo += "-";
+    logInfo += gps.date.day();
+    logInfo += " ";
+    logInfo += gps.time.hour();
+    logInfo += ":";
+    logInfo += gps.time.minute();
+    logInfo += "]";
+    logInfo += " Error: ";
+    logInfo += longFlash;
+    logInfo += shortFlash;
+    writeLog(logInfo);
+  }
 
   for(int counter = 0; counter < cycles; counter++) {  
     for(int i = 0; i < longFlash; i++) {
@@ -389,6 +441,7 @@ void ledErrorCode(int longFlash, int shortFlash, int cycles) {
     }
   }
 
+  // Turn off red and blue LEDs
   digitalWrite(RED, HIGH);
   digitalWrite(BLUE, HIGH);
 }
