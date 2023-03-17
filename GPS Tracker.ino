@@ -286,7 +286,7 @@ void writeFile(String WriteData) {
     String month = "";
     String day = "";
 
-    if(String(gps.date.month() < 10)) {
+    if(gps.date.month() < 10) {
       month = "0" + String(gps.date.month()); 
     } else {
       month = String(gps.date.month());
