@@ -76,6 +76,10 @@ TinyGPSPlus gps;
 #define GREEN 23
 #define LED_PWR 25
 
+// Error LED timers in milliseconds
+const int longFlashDuration = 1000;
+const int shortFlashDuration = 200;
+
 // Set up our geofence for initial GPS location and zone
 float initialLatitude = 0;
 float initialLongitude = 0;
@@ -137,6 +141,8 @@ void setup() {
   
   // Initialize SD Card
   initSD(); 
+
+  D_println("Boot sequence complete.");  
 }
 
 // Start the loop. Only work if GPS data is valid.
@@ -417,24 +423,24 @@ void ledErrorCode(int longFlash, int shortFlash, int cycles) {
         digitalWrite(BLUE, HIGH);
         digitalWrite(RED, LOW);
         unsigned long startTime = millis(); // Get start time
-        while (millis() - startTime < 1000) { // Wait 1 second
-          // Do nothing
+        while (millis() - startTime < longFlashDuration) { 
+          // Wait for the duration of a long flash
         }
         digitalWrite(RED, HIGH);
         startTime = millis(); // Get start time
-        while (millis() - startTime < 200) { // Wait 200ms
-          // Do nothing
+        while (millis() - startTime < shortFlashDuration) { 
+          // Wait for the duration of a short flash
         }
         for(int i = 0; i < shortFlash; i++) {
           digitalWrite(BLUE, LOW);
           startTime = millis(); // Get start time
-          while (millis() - startTime < 200) { // Wait 200ms
-            // Do nothing
+          while (millis() - startTime < shortFlashDuration) {
+            // Wait for the duration of a short flash
           }
           digitalWrite(BLUE, HIGH);
           startTime = millis(); // Get start time
-          while (millis() - startTime < 200) { // Wait 200ms
-            // Do nothing
+          while (millis() - startTime < shortFlashDuration) {
+            // Wait for the duration of a short flash
           }
           digitalWrite(BLUE, LOW);
         }
